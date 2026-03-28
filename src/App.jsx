@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "./supabase";
 
 const DAYS = [
   {
@@ -6,6 +7,7 @@ const DAYS = [
     emoji: "🌊",
     tasks: [
       { id: "mon-country", label: "🌍 Spin the globe — pick this week's country!", type: "special" },
+      { id: "mon-maths", label: "🧮 Maths tutoring", type: "study" },
       { id: "mon-homework", label: "📚 Homework / Study", type: "study" },
       { id: "mon-reading", label: "📖 30 min reading", type: "reading" },
     ],
@@ -112,11 +114,40 @@ const loadChecked = (weekId) => {
   }
 };
 
-const saveCheckedToStorage = (weekId, checked) => {
+const saveCheckedLocal = (weekId, checked) => {
   try {
     localStorage.setItem(`planner-${weekId}`, JSON.stringify(checked));
   } catch (e) {
-    console.error("Save failed:", e);
+    console.error("Local save failed:", e);
+  }
+};
+
+const saveCheckedToSupabase = async (weekId, checked) => {
+  try {
+    const { error } = await supabase
+      .from("planner_weeks")
+      .upsert({ week_id: weekId, checked_tasks: checked }, { onConflict: "week_id" });
+    if (error) console.error("Supabase save error:", error);
+  } catch (e) {
+    console.error("Supabase save failed:", e);
+  }
+};
+
+const loadCheckedFromSupabase = async (weekId) => {
+  try {
+    const { data, error } = await supabase
+      .from("planner_weeks")
+      .select("checked_tasks")
+      .eq("week_id", weekId)
+      .single();
+    if (error && error.code !== "PGRST116") {
+      console.error("Supabase load error:", error);
+      return null;
+    }
+    return data?.checked_tasks || null;
+  } catch (e) {
+    console.error("Supabase load failed:", e);
+    return null;
   }
 };
 
@@ -130,11 +161,47 @@ export default function App() {
   });
   const [turtleFact] = useState(() => turtleFacts[Math.floor(Math.random() * turtleFacts.length)]);
   const [showCelebration, setShowCelebration] = useState(false);
+  const [synced, setSynced] = useState(false);
+
+  // Load from Supabase on mount (overrides localStorage with latest shared state)
+  useEffect(() => {
+    const loadFromCloud = async () => {
+      const cloudData = await loadCheckedFromSupabase(weekId);
+      if (cloudData) {
+        setChecked(cloudData);
+        saveCheckedLocal(weekId, cloudData);
+      }
+      setSynced(true);
+    };
+    loadFromCloud();
+  }, [weekId]);
+
+  // Subscribe to real-time changes from Supabase
+  useEffect(() => {
+    const channel = supabase
+      .channel("planner-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "planner_weeks", filter: `week_id=eq.${weekId}` },
+        (payload) => {
+          if (payload.new?.checked_tasks) {
+            setChecked(payload.new.checked_tasks);
+            saveCheckedLocal(weekId, payload.new.checked_tasks);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [weekId]);
 
   const toggleTask = (taskId) => {
     const newChecked = { ...checked, [taskId]: !checked[taskId] };
     setChecked(newChecked);
-    saveCheckedToStorage(weekId, newChecked);
+    saveCheckedLocal(weekId, newChecked);
+    saveCheckedToSupabase(weekId, newChecked);
 
     if (!checked[taskId]) {
       const dayTasks = DAYS[selectedDay].tasks;
@@ -148,7 +215,8 @@ export default function App() {
 
   const resetWeek = () => {
     setChecked({});
-    saveCheckedToStorage(weekId, {});
+    saveCheckedLocal(weekId, {});
+    saveCheckedToSupabase(weekId, {});
   };
 
   const totalTasks = DAYS.reduce((sum, d) => sum + d.tasks.length, 0);
