@@ -18,7 +18,6 @@ const DAYS = [
     tasks: [
       { id: "tue-homework", label: "📚 Homework / Study", type: "study" },
       { id: "tue-reading", label: "📖 30 min reading", type: "reading" },
-      { id: "tue-bins", label: "🗑️ Bring the bins in", type: "chore" },
     ],
   },
   {
@@ -27,6 +26,7 @@ const DAYS = [
     tasks: [
       { id: "wed-reading", label: "📖 30 min reading", type: "reading" },
       { id: "wed-sport", label: "🏃‍♀️ Sport training", type: "sport" },
+      { id: "wed-bins", label: "🗑️ Bring the bins in", type: "chore" },
     ],
   },
   {
